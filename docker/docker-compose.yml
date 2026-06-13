@@ -1,0 +1,55 @@
+version: '3.9'
+
+services:
+
+
+
+  # ── Redis (in-memory only, no disk persistence) ────────────────────────────
+  redis:
+    image: redis:7-alpine
+    container_name: meeting-ai-redis
+    restart: unless-stopped
+    # Disable ALL persistence — nothing ever hits disk
+    command: redis-server --save "" --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # ── FastAPI backend ─────────────────────────────────────────────────────────
+  backend:
+    build:
+      context: ../backend
+      dockerfile: Dockerfile
+    container_name: meeting-ai-backend
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    env_file:
+      - ../backend/.env
+    environment:
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+    # Audio device access (Linux/Mac host)
+    # devices:
+    #   - /dev/snd:/dev/snd
+    # group_add:
+    #   - audio
+    depends_on:
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    volumes:
+      - whisper_cache:/tmp/whisper_models
+
+volumes:
+  whisper_cache:
+    driver: local

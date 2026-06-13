@@ -1,0 +1,27 @@
+{
+  "name": "meeting-ai",
+  "version": "1.0.0",
+  "description": "AI-powered meeting assistant — invisible overlay",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "ELECTRON_IS_DEV=1 electron .",
+    "build": "electron-builder"
+  },
+  "dependencies": {
+    "electron-store": "^8.2.0"
+  },
+  "devDependencies": {
+    "electron": "^31.2.1",
+    "electron-builder": "^24.13.3"
+  },
+  "build": {
+    "appId": "com.meetingai.app",
+    "productName": "Meeting AI",
+    "files": ["main.js", "preload.js", "assets/**"],
+    "extraResources": [{ "from": "../frontend/dist", "to": "frontend" }],
+    "mac": { "target": "dmg", "category": "public.app-category.productivity" },
+    "win": { "target": "nsis" },
+    "linux": { "target": "AppImage" }
+  }
+}
