@@ -1,23 +1,15 @@
 import json
 from typing import AsyncGenerator
-
 import redis.asyncio as aioredis
 from loguru import logger
 from tenacity import retry, stop_after_attempt, wait_exponential
-
 from config import get_settings
 
 settings = get_settings()
 
-# ── fallback store ────────────────────────────────────────────────────────────
-
 _fallback_store: dict[str, list[str]] = {}
 _use_fallback: bool = False
-
-# ── connection pool ────────────────────────────────────────────────────────────
-
 _pool: aioredis.ConnectionPool | None = None
-
 
 def _get_pool() -> aioredis.ConnectionPool:
     global _pool
@@ -29,33 +21,22 @@ def _get_pool() -> aioredis.ConnectionPool:
         )
     return _pool
 
-
 def get_redis() -> aioredis.Redis:
     return aioredis.Redis(connection_pool=_get_pool())
-
-
-# ── key helpers ────────────────────────────────────────────────────────────────
 
 def _transcript_key(session_id: str) -> str:
     return f"session:{session_id}:transcript"
 
-
 def _channel_key(session_id: str) -> str:
     return f"session:{session_id}:channel"
-
 
 def _meta_key(session_id: str) -> str:
     return f"session:{session_id}:meta"
 
-
-# ── transcript ops ─────────────────────────────────────────────────────────────
-
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.3))
 async def append_transcript(session_id: str, text: str, speaker: str = "unknown") -> None:
-    """Append a transcript line, trim to max window, publish to channel."""
     if not text.strip():
         return
-
     entry = json.dumps({"text": text.strip(), "speaker": speaker})
     key = _transcript_key(session_id)
 
@@ -72,10 +53,8 @@ async def append_transcript(session_id: str, text: str, speaker: str = "unknown"
         r = get_redis()
         pipe = r.pipeline()
         pipe.rpush(key, entry)
-        # Keep only the last N lines — prevents unbounded memory growth
         pipe.ltrim(key, -settings.session_max_transcript_lines, -1)
         pipe.expire(key, settings.redis_ttl_seconds)
-        # Publish raw text to the pub/sub channel so subscribers get real-time updates
         pipe.publish(_channel_key(session_id), entry)
         await pipe.execute()
     except Exception as e:
@@ -87,9 +66,7 @@ async def append_transcript(session_id: str, text: str, speaker: str = "unknown"
 
     logger.debug(f"[{session_id}] transcript appended: {text[:60]}...")
 
-
 async def get_context(session_id: str, last_n: int = 20) -> str:
-    """Return the last N lines as a plain text block for the LLM prompt."""
     key = _transcript_key(session_id)
     
     global _use_fallback
@@ -114,9 +91,7 @@ async def get_context(session_id: str, last_n: int = 20) -> str:
 
     return "\n".join(lines)
 
-
 async def clear_session(session_id: str) -> None:
-    """Delete all keys for a session immediately (called on disconnect)."""
     global _use_fallback
     key = _transcript_key(session_id)
     
@@ -132,11 +107,7 @@ async def clear_session(session_id: str) -> None:
             _fallback_store.pop(key, None)
     logger.info(f"[{session_id}] session cleared")
 
-
-# ── pub/sub subscriber ─────────────────────────────────────────────────────────
-
 async def subscribe_transcript(session_id: str) -> AsyncGenerator[dict, None]:
-    """Async generator that yields new transcript entries in real time."""
     global _use_fallback
     if _use_fallback:
         return
@@ -162,9 +133,6 @@ async def subscribe_transcript(session_id: str) -> AsyncGenerator[dict, None]:
             await pubsub.close()
         except:
             pass
-
-
-# ── health check ───────────────────────────────────────────────────────────────
 
 async def redis_ping() -> bool:
     try:

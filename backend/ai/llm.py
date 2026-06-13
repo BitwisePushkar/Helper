@@ -1,25 +1,6 @@
-"""
-AI module — LangChain + Ollama integration.
-
-Two responsibilities:
-  1. Question detection: classify whether the latest transcript line is a
-     question directed at the user.
-  2. Answer generation: stream a concise answer given the rolling context.
-
-Uses langchain_ollama (OllamaLLM) so all inference stays local.
-Includes retry logic and health-check for Ollama availability.
-
-Edge cases:
-  - Ollama not running → clear error, not a silent hang
-  - Empty context → still produces an answer (model's own knowledge)
-  - Streaming interrupted → caller catches StopAsyncIteration cleanly
-  - Model not pulled yet → surfaces actionable error message
-"""
-
 import asyncio
 import re
 from typing import AsyncGenerator
-
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
@@ -33,15 +14,11 @@ from tenacity import (
     RetryError,
 )
 import logging
-
 from config import get_settings
 
 settings = get_settings()
 
-# ── LLM singleton ──────────────────────────────────────────────────────────────
-
 _llm: ChatGoogleGenerativeAI | None = None
-
 
 def _get_llm() -> ChatGoogleGenerativeAI:
     global _llm
@@ -57,12 +34,9 @@ def _get_llm() -> ChatGoogleGenerativeAI:
         )
     return _llm
 
-
-# ── prompt templates ───────────────────────────────────────────────────────────
-
 _QUESTION_DETECT_PROMPT = PromptTemplate.from_template(
     """You are an assistant that detects whether the last line of a meeting transcript
-is a question directed at a specific participant.
+is a question directed at a participant, or a technical term/concept/topic that requires explanation.
 
 Transcript context:
 {context}
@@ -70,7 +44,7 @@ Transcript context:
 Last line: "{last_line}"
 
 Respond with ONLY one of: YES or NO.
-Is the last line a question directed at someone?"""
+Is the last line a question, request, or technical topic that should be answered or explained?"""
 )
 
 _ANSWER_PROMPT = PromptTemplate.from_template(
@@ -84,25 +58,18 @@ Question asked: {question}
 Provide a concise, helpful answer in 2-4 sentences. Be direct. Do not repeat the question."""
 )
 
-
-# ── question detector ──────────────────────────────────────────────────────────
-
 _QUESTION_PATTERNS = re.compile(
-    r"(^|\s)(who|what|where|when|why|how|can you|could you|would you|do you|"
-    r"is there|are there|have you|did you|will you|should we)[^\w]",
+    r"\b(who|what|where|when|why|how|can|could|would|should|do|does|did|is|are|was|were|have|has|had|will|shall|explain|define|describe|tell\s+me|binary|search|algorithm|sort|tree|graph|hash|cache|database|sql|index|array|list|stack|queue|complexity|big\s+o|dp|recursion|heap)\b",
     re.IGNORECASE,
 )
 
-
 def _heuristic_is_question(text: str) -> bool:
-    """Fast regex pre-filter to avoid LLM call for obvious non-questions."""
     text = text.strip()
     if text.endswith("?"):
         return True
     if _QUESTION_PATTERNS.search(text):
         return True
     return False
-
 
 @retry(
     stop=stop_after_attempt(2),
@@ -112,19 +79,13 @@ def _heuristic_is_question(text: str) -> bool:
     reraise=False,
 )
 async def is_question(text: str, context: str) -> bool:
-    """
-    Returns True if the text is a question directed at the user.
-    Uses regex pre-filter first, then LLM for ambiguous cases.
-    """
     if not text.strip():
         return False
 
-    # Fast path — obvious questions
     if _heuristic_is_question(text):
         logger.debug(f"Heuristic detected question: {text[:60]}")
         return True
 
-    # Slow path — ask the LLM for ambiguous sentences
     try:
         llm = _get_llm()
         chain = _QUESTION_DETECT_PROMPT | llm | StrOutputParser()
@@ -136,20 +97,12 @@ async def is_question(text: str, context: str) -> bool:
         logger.debug(f"LLM question detection: '{text[:60]}' → {detected}")
         return detected
     except RetryError:
-        # Fall back to heuristic if LLM fails
         logger.warning("LLM question detection failed — falling back to heuristic")
         return _heuristic_is_question(text)
-
-
-# ── answer generator ───────────────────────────────────────────────────────────
 
 async def stream_answer(
     question: str, context: str
 ) -> AsyncGenerator[str, None]:
-    """
-    Async generator that yields answer tokens one by one.
-    Streams directly from Ollama via LangChain's astream interface.
-    """
     if not question.strip():
         return
 
@@ -167,11 +120,7 @@ async def stream_answer(
         logger.error(f"Error streaming answer: {e}")
         yield f"\n\n[Error generating answer: {e}]"
 
-
-# ── Gemini health check ────────────────────────────────────────────────────────
-
 async def gemini_health() -> dict:
-    """Check if Gemini API key is configured."""
     has_key = bool(settings.gemini_api_key)
     return {
         "api_reachable": has_key,

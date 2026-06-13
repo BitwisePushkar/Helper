@@ -9,7 +9,7 @@ class Settings(BaseSettings):
 
     # Gemini / LangChain
     gemini_api_key: str = ""
-    gemini_model: str = "gemini-1.5-flash"
+    gemini_model: str = "gemini-3.1-flash-lite"
 
     # Whisper
     whisper_model_size: str = "base"
@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"
+        extra = "ignore"
 
 
 @lru_cache()

@@ -1,43 +1,17 @@
-"""
-FastAPI application entry point.
-
-WebSocket protocol (per session):
-  Client → Server:  JSON  { "type": "transcript", "text": "...", "speaker": "..." }
-                    JSON  { "type": "ping" }
-                    JSON  { "type": "stop" }
-
-  Server → Client:  JSON  { "type": "transcript_ack", "text": "..." }
-                    JSON  { "type": "question_detected", "text": "..." }
-                    JSON  { "type": "answer_token", "token": "..." }
-                    JSON  { "type": "answer_done" }
-                    JSON  { "type": "pong" }
-                    JSON  { "type": "error", "message": "..." }
-
-Edge cases:
-  - Client disconnects mid-stream → generator cleaned up, session preserved in Redis
-  - Concurrent question triggers → queued, answered sequentially
-  - Malformed JSON → error frame returned, connection kept alive
-  - Ollama unavailable → error frame, connection kept alive
-"""
-
 import asyncio
 import json
 import uuid
 import numpy as np
 from contextlib import asynccontextmanager
-
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
-
 from config import get_settings
 from ai import is_question, stream_answer, gemini_health
 from audio.transcriber import warmup
 from session import append_transcript, get_context, clear_session, redis_ping
 
 settings = get_settings()
-
-# ── lifespan ───────────────────────────────────────────────────────────────────
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -47,9 +21,6 @@ async def lifespan(app: FastAPI):
     yield
     logger.info("Shutting down")
 
-
-# ── app ────────────────────────────────────────────────────────────────────────
-
 app = FastAPI(
     title="Meeting AI Backend",
     version="1.0.0",
@@ -58,14 +29,11 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Electron renderer has no origin
+    allow_origins=["*"], 
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-# ── active connection registry ─────────────────────────────────────────────────
 
 class ConnectionManager:
     def __init__(self):
@@ -84,27 +52,18 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
-
-# ── helpers ────────────────────────────────────────────────────────────────────
-
 async def _send(ws: WebSocket, payload: dict) -> bool:
-    """Send JSON frame. Returns False if connection is gone."""
     try:
         await ws.send_text(json.dumps(payload))
         return True
     except Exception:
         return False
 
-
-# ── WebSocket endpoint ─────────────────────────────────────────────────────────
-
 @app.websocket("/ws/{session_id}")
 async def websocket_endpoint(websocket: WebSocket, session_id: str):
     await websocket.accept()
     manager.add(session_id, websocket)
     logger.info(f"[{session_id}] Client connected (total: {manager.count})")
-
-    # Question processing separates detection from streaming to allow cancellation
     question_queue: asyncio.Queue[str] = asyncio.Queue()
     streaming_task: asyncio.Task | None = None
 
@@ -112,7 +71,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
         nonlocal streaming_task
         while True:
             question = await question_queue.get()
-            if question is None:  # shutdown signal
+            if question is None: 
                 if streaming_task and not streaming_task.done():
                     streaming_task.cancel()
                 break
@@ -120,7 +79,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
             try:
                 context = await get_context(session_id, last_n=20)
                 if await is_question(question, context):
-                    # Cancel the ongoing answer if a new question is detected
                     if streaming_task and not streaming_task.done():
                         streaming_task.cancel()
                         await asyncio.sleep(0)
@@ -149,8 +107,6 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     try:
         while True:
             raw = await websocket.receive_text()
-
-            # Parse frame
             try:
                 frame = json.loads(raw)
             except json.JSONDecodeError:
@@ -170,17 +126,14 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                     await _send(websocket, {"type": "transcript_ack", "text": text})
                     continue
 
-                # Persist to Redis
                 await append_transcript(session_id, text, speaker)
                 await _send(websocket, {"type": "transcript_ack", "text": text})
 
-                # Enqueue for question detection (non-blocking)
                 await question_queue.put(text)
 
             elif frame_type == "audio_chunk":
                 data = frame.get("data", "")
                 if data:
-                    # Run decoding and transcription in a thread so we don't block
                     import base64
                     import subprocess
                     
@@ -219,10 +172,8 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                         text = await transcribe_chunk(pcm_data)
                         if text:
                             logger.info(f"[{session_id}] Transcribed mic audio: {text}")
-                            # Persist to Redis
                             await append_transcript(session_id, text, "user")
                             await _send(websocket, {"type": "transcript_ack", "text": text})
-                            # Enqueue for question detection
                             await question_queue.put(text)
 
             else:
@@ -236,17 +187,11 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
     except Exception as e:
         logger.error(f"[{session_id}] Unexpected error: {e}")
     finally:
-        # Shutdown question worker
         await question_queue.put(None)
         await worker_task
 
         manager.remove(session_id)
-        # NOTE: we do NOT clear Redis on disconnect — session persists until TTL
-        # so a page refresh doesn't lose context. Call /session/{id} DELETE to force-clear.
         logger.info(f"[{session_id}] Connection cleaned up (total: {manager.count})")
-
-
-# ── REST routes ────────────────────────────────────────────────────────────────
 
 @app.get("/health")
 async def health():

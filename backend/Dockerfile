@@ -1,6 +1,5 @@
 FROM python:3.11-slim
 
-# System deps for sounddevice + faster-whisper
 RUN apt-get update && apt-get install -y --no-install-recommends \
     libportaudio2 \
     libportaudiocpp0 \
@@ -16,7 +15,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Pre-download Whisper model at build time so container starts fast
 RUN python -c "from faster_whisper import WhisperModel; WhisperModel('base', device='cpu', compute_type='int8', download_root='/tmp/whisper_models')"
 
 EXPOSE 8000

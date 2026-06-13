@@ -1,15 +1,9 @@
-version: '3.9'
-
 services:
 
-
-
-  # ── Redis (in-memory only, no disk persistence) ────────────────────────────
   redis:
     image: redis:7-alpine
     container_name: meeting-ai-redis
     restart: unless-stopped
-    # Disable ALL persistence — nothing ever hits disk
     command: redis-server --save "" --appendonly no --maxmemory 256mb --maxmemory-policy allkeys-lru
     ports:
       - "6379:6379"
@@ -19,7 +13,6 @@ services:
       timeout: 3s
       retries: 5
 
-  # ── FastAPI backend ─────────────────────────────────────────────────────────
   backend:
     build:
       context: ../backend
