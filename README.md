@@ -12,7 +12,7 @@ An invisible AI overlay that listens to your meetings, detects questions directe
 | UI | React 18 + Vite + Tailwind |
 | Backend API | FastAPI + Python 3.11 |
 | Transcription | faster-whisper (local, runs in Docker) |
-| LLM | Ollama + LangChain-Ollama (fully local) |
+| LLM | Gemini API + LangChain Google GenAI |
 | Session memory | Redis (in-memory only, no disk) |
 | Orchestration | Docker Compose |
 
@@ -20,20 +20,25 @@ An invisible AI overlay that listens to your meetings, detects questions directe
 
 ## Quick start (one command)
 
-```bash
-git clone <repo>
-cd meeting-ai
-chmod +x setup.sh teardown.sh
-./setup.sh
-```
+1. Set your Gemini API key in `backend/.env` (or copy `backend/.env.example` to `backend/.env` and fill it in):
+   ```env
+   GEMINI_API_KEY=your_api_key_here
+   ```
+
+2. Run the setup script:
+   ```bash
+   git clone <repo>
+   cd meeting-ai
+   chmod +x setup.sh teardown.sh
+   ./setup.sh
+   ```
 
 That's it. The script handles everything in order:
 1. Checks Docker, Node.js
-2. Creates `.env` files
+2. Creates `.env` files (if not present)
 3. Installs npm packages
-4. Builds and starts Docker services (Redis, Ollama, Backend)
-5. Pulls the Ollama model (default: `mistral` ~4GB)
-6. Launches the Electron overlay
+4. Builds and starts Docker services (Redis, Backend)
+5. Launches the Electron overlay
 
 ---
 
@@ -99,12 +104,9 @@ sudo apt-get install -y pulseaudio pavucontrol
 Edit `backend/.env` or pass as env variable:
 
 ```bash
-OLLAMA_MODEL=phi3 ./setup.sh          # Phi-3-mini — fast, 2.3GB
-OLLAMA_MODEL=mistral ./setup.sh       # Mistral 7B — best balance (default)
-OLLAMA_MODEL=llama3 ./setup.sh        # Llama 3 8B — best quality, 4.7GB
+GEMINI_MODEL=gemini-3.1-flash-lite ./setup.sh # Default — fast and efficient
+GEMINI_MODEL=gemini-3.1-flash ./setup.sh      # Higher quality answers
 ```
-
-Model will be pulled automatically on first run.
 
 ---
 
@@ -115,7 +117,7 @@ meeting-ai/
 ├── setup.sh                    ← Run this
 ├── teardown.sh
 ├── docker/
-│   └── docker-compose.yml      ← Redis + Ollama + Backend
+│   └── docker-compose.yml      ← Redis + Backend
 ├── backend/
 │   ├── main.py                 ← FastAPI app + WebSocket
 │   ├── ai/llm.py               ← LangChain + Ollama question detection + streaming
@@ -194,18 +196,20 @@ Tested on Zoom, Google Meet, Microsoft Teams, and Webex.
 
 ## Troubleshooting
 
-**Ollama model not responding**
-```bash
-docker compose -f docker/docker-compose.yml logs ollama
-# If model not pulled:
-docker compose -f docker/docker-compose.yml exec ollama ollama pull mistral
-```
+**Gemini API key issues / LLM not responding**
+- Ensure `GEMINI_API_KEY` is correctly set in `backend/.env`.
+- Check backend logs:
+  ```bash
+  docker compose -f docker/docker-compose.yml logs backend
+  ```
+- Query the `/health` endpoint to inspect connection status:
+  ```bash
+  curl http://localhost:8000/health
+  ```
 
 **Backend unhealthy**
 ```bash
 docker compose -f docker/docker-compose.yml logs backend
-# Check /health endpoint:
-curl http://localhost:8000/health
 ```
 
 **No audio captured**
