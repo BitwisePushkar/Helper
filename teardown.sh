@@ -17,5 +17,5 @@ info "Killing any lingering Vite/Frontend processes..."
 pkill -f "vite" 2>/dev/null || true
 
 success "All services stopped. Data in Docker volumes is preserved."
-echo "To also delete Ollama model cache and Whisper cache:"
+echo "To also delete Gemini model cache and Whisper cache:"
 echo "  docker compose -f docker/docker-compose.yml down -v"

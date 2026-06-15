@@ -26,11 +26,21 @@ An invisible AI overlay that listens to your meetings, detects questions directe
    ```
 
 2. Run the setup script:
+
+   **On macOS / Linux:**
    ```bash
-   git clone <repo>
-   cd meeting-ai
+   git clone https://github.com/BitwisePushkar/Helper.git
+   cd Helper
    chmod +x setup.sh teardown.sh
    ./setup.sh
+   ```
+
+   **On Windows (PowerShell):**
+   ```powershell
+   git clone https://github.com/BitwisePushkar/Helper.git
+   cd Helper
+   Set-ExecutionPolicy -ExecutionPolicy Bypass -Scope Process
+   .\setup.ps1
    ```
 
 That's it. The script handles everything in order:
@@ -66,18 +76,14 @@ brew install blackhole-2ch
 ### Windows
 
 ```powershell
-# 1. Docker Desktop with WSL2 backend
+# 1. Docker Desktop for Windows
 # Download from https://www.docker.com/products/docker-desktop/
 
 # 2. Node.js LTS
-# Download from https://nodejs.org/
+# Download from https://nodejs.org/ (or will auto-install via winget if setup.ps1 runs)
 
 # 3. VB-Cable (virtual audio, free)
 # Download from https://vb-audio.com/Cable/
-
-# ⚠ Electron must run from Windows (not inside WSL2)
-# Run setup.sh from Git Bash or WSL2, but launch Electron from Windows terminal:
-#   cd electron && npx electron .
 ```
 
 ### Linux (Ubuntu 22.04+)
@@ -103,9 +109,16 @@ sudo apt-get install -y pulseaudio pavucontrol
 
 Edit `backend/.env` or pass as env variable:
 
+**On macOS / Linux:**
 ```bash
 GEMINI_MODEL=gemini-3.1-flash-lite ./setup.sh # Default — fast and efficient
 GEMINI_MODEL=gemini-3.1-flash ./setup.sh      # Higher quality answers
+```
+
+**On Windows (PowerShell):**
+```powershell
+$env:GEMINI_MODEL="gemini-3.1-flash-lite"; .\setup.ps1
+$env:GEMINI_MODEL="gemini-3.1-flash"; .\setup.ps1
 ```
 
 ---
@@ -114,13 +127,15 @@ GEMINI_MODEL=gemini-3.1-flash ./setup.sh      # Higher quality answers
 
 ```
 meeting-ai/
-├── setup.sh                    ← Run this
-├── teardown.sh
+├── setup.sh                    ← Run this on macOS / Linux
+├── setup.ps1                   ← Run this on Windows
+├── teardown.sh                 ← Tear down on macOS / Linux
+├── teardown.ps1                ← Tear down on Windows
 ├── docker/
 │   └── docker-compose.yml      ← Redis + Backend
 ├── backend/
 │   ├── main.py                 ← FastAPI app + WebSocket
-│   ├── ai/llm.py               ← LangChain + Ollama question detection + streaming
+│   ├── ai/llm.py               ← LangChain + Gemini question detection + streaming
 │   ├── audio/capture.py        ← sounddevice mic + loopback capture
 │   ├── audio/transcriber.py    ← faster-whisper STT
 │   ├── session/redis_store.py  ← rolling transcript buffer
@@ -166,7 +181,7 @@ The backend exposes `ws://localhost:8000/ws/{session_id}`.
 
 | Method | Path | Description |
 |---|---|---|
-| GET | `/health` | Service health (Redis + Ollama status) |
+| GET | `/health` | Service health (Redis + Gemini status) |
 | GET | `/new-session` | Generate a new session UUID |
 | GET | `/session/{id}/context` | Get rolling transcript context |
 | DELETE | `/session/{id}` | Clear session from Redis |
@@ -233,11 +248,21 @@ FRONTEND_PORT=3000 ./setup.sh
 
 ## Stopping everything
 
+**On macOS / Linux:**
 ```bash
 ./teardown.sh
 ```
 
+**On Windows (PowerShell):**
+```powershell
+.\teardown.ps1
+```
+
 To also wipe downloaded models and caches:
 ```bash
+# macOS / Linux
+docker compose -f docker/docker-compose.yml down -v
+
+# Windows (PowerShell)
 docker compose -f docker/docker-compose.yml down -v
 ```
