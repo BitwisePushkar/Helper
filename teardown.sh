@@ -8,7 +8,7 @@ success() { echo -e "${GREEN}[OK]${NC}    $*"; }
 COMPOSE_FILE="$(dirname "$0")/docker/docker-compose.yml"
 
 info "Stopping Docker services..."
-docker compose -f "$COMPOSE_FILE" down --remove-orphans
+sudo docker compose -f "$COMPOSE_FILE" down --remove-orphans
 
 info "Killing any lingering Electron processes..."
 pkill -f "electron ." 2>/dev/null || true

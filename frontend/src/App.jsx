@@ -4,6 +4,7 @@ import { useAudioCapture } from './hooks/useAudioCapture'
 import { AnswerPanel } from './components/AnswerPanel'
 import { TranscriptFeed } from './components/TranscriptFeed'
 import { Controls } from './components/Controls'
+import { QueryBar } from './components/QueryBar'
 import { StatusBadge } from './components/StatusBadge'
 import './index.css'
 
@@ -150,6 +151,12 @@ function App() {
             sessionId={sessionId}
           />
 
+          {/* Query input */}
+          <QueryBar
+            onSubmit={(text) => sendFrame({ type: 'question', text })}
+            disabled={status !== 'connected'}
+          />
+
           {/* Answer panel */}
           <AnswerPanel
             question={currentQuestion}
@@ -167,15 +174,6 @@ function App() {
             </div>
           )}
 
-          {/* Dev helper (remove in prod) */}
-          {import.meta.env.DEV && (
-            <button
-              onClick={injectTest}
-              className="w-full text-xs text-white/20 hover:text-white/40 py-1 transition-colors"
-            >
-              inject test question
-            </button>
-          )}
         </div>
       </div>
     </div>

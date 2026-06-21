@@ -5,15 +5,6 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import StrOutputParser
 from loguru import logger
-from tenacity import (
-    retry,
-    retry_if_exception_type,
-    stop_after_attempt,
-    wait_exponential,
-    before_sleep_log,
-    RetryError,
-)
-import logging
 from config import get_settings
 
 settings = get_settings()
@@ -26,7 +17,7 @@ def _get_llm() -> ChatGoogleGenerativeAI:
         _llm = ChatGoogleGenerativeAI(
             model=settings.gemini_model,
             temperature=0.3,
-            max_tokens=300,
+            max_tokens=1024,
             google_api_key=settings.gemini_api_key,
         )
         logger.info(
@@ -55,7 +46,8 @@ Meeting transcript so far:
 
 Question asked: {question}
 
-Provide a concise, helpful answer in 2-4 sentences. Be direct. Do not repeat the question."""
+If the question asks for code, provide a concise working implementation with minimal comments.
+Otherwise, provide a clear answer in 2-4 sentences. Be direct. Do not repeat the question."""
 )
 
 _QUESTION_PATTERNS = re.compile(
@@ -71,13 +63,6 @@ def _heuristic_is_question(text: str) -> bool:
         return True
     return False
 
-@retry(
-    stop=stop_after_attempt(2),
-    wait=wait_exponential(multiplier=0.5),
-    retry=retry_if_exception_type(Exception),
-    before_sleep=before_sleep_log(logger, logging.WARNING),
-    reraise=False,
-)
 async def is_question(text: str, context: str) -> bool:
     if not text.strip():
         return False
@@ -89,15 +74,15 @@ async def is_question(text: str, context: str) -> bool:
     try:
         llm = _get_llm()
         chain = _QUESTION_DETECT_PROMPT | llm | StrOutputParser()
-        result = await asyncio.get_event_loop().run_in_executor(
+        result = await asyncio.get_running_loop().run_in_executor(
             None,
             lambda: chain.invoke({"context": context[-500:], "last_line": text}),
         )
         detected = result.strip().upper().startswith("YES")
         logger.debug(f"LLM question detection: '{text[:60]}' → {detected}")
         return detected
-    except RetryError:
-        logger.warning("LLM question detection failed — falling back to heuristic")
+    except Exception as e:
+        logger.warning(f"LLM question detection failed ({e}) — falling back to heuristic")
         return _heuristic_is_question(text)
 
 async def stream_answer(

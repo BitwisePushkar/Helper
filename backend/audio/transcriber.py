@@ -64,6 +64,5 @@ async def transcribe_chunk(audio: np.ndarray) -> str:
     return await loop.run_in_executor(_executor, _transcribe_sync, audio)
 
 async def warmup() -> None:
-    silence = np.zeros(settings.audio_sample_rate, dtype=np.float32)
-    await transcribe_chunk(silence)
+    _load_model()
     logger.info("Whisper warmup complete")

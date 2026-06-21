@@ -1,6 +1,9 @@
 import asyncio
 import json
 import uuid
+import base64
+import subprocess
+from concurrent.futures import ThreadPoolExecutor
 import numpy as np
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
@@ -9,9 +12,45 @@ from loguru import logger
 from config import get_settings
 from ai import is_question, stream_answer, gemini_health
 from audio.transcriber import warmup
+from audio.capture import AudioCapture
 from session import append_transcript, get_context, clear_session, redis_ping
 
 settings = get_settings()
+
+_ffmpeg_pool = ThreadPoolExecutor(max_workers=4, thread_name_prefix="ffmpeg")
+
+
+def _decode_audio_chunk(b64_data: str) -> np.ndarray:
+    try:
+        audio_bytes = base64.b64decode(b64_data)
+        cmd = [
+            "ffmpeg", "-i", "pipe:0",
+            "-f", "f32le", "-acodec", "pcm_f32le",
+            "-ar", "16000", "-ac", "1",
+            "pipe:1"
+        ]
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        stdout, stderr = process.communicate(input=audio_bytes, timeout=10)
+        if process.returncode != 0:
+            logger.error(f"FFmpeg decoding failed: {stderr.decode()}")
+            return np.array([], dtype=np.float32)
+        return np.frombuffer(stdout, dtype=np.float32)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        logger.error("FFmpeg decode timed out")
+        return np.array([], dtype=np.float32)
+    except Exception as decode_err:
+        logger.error(f"Failed to decode audio chunk: {decode_err}")
+        return np.array([], dtype=np.float32)
+
+
+_audio_capture: AudioCapture | None = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -19,6 +58,10 @@ async def lifespan(app: FastAPI):
     await warmup()
     logger.info("Server ready ✓")
     yield
+    global _audio_capture
+    if _audio_capture is not None:
+        _audio_capture.stop()
+        _audio_capture = None
     logger.info("Shutting down")
 
 app = FastAPI(
@@ -129,44 +172,41 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
                 await append_transcript(session_id, text, speaker)
                 await _send(websocket, {"type": "transcript_ack", "text": text})
 
-                await question_queue.put(text)
+                if len(text.split()) >= 3:
+                    await question_queue.put(text)
+
+            elif frame_type == "question":
+                text = (frame.get("text") or "").strip()
+                if text:
+                    await append_transcript(session_id, text, "user")
+                    await _send(websocket, {"type": "transcript_ack", "text": text})
+                    context = await get_context(session_id, last_n=20)
+                    if streaming_task and not streaming_task.done():
+                        streaming_task.cancel()
+                        await asyncio.sleep(0)
+
+                    async def _direct_stream(q, c):
+                        logger.info(f"[{session_id}] Direct question: {q[:80]}")
+                        await _send(websocket, {"type": "question_detected", "text": q})
+                        try:
+                            async for token in stream_answer(q, c):
+                                if not await _send(websocket, {"type": "answer_token", "token": token}):
+                                    break
+                        except asyncio.CancelledError:
+                            pass
+                        finally:
+                            await _send(websocket, {"type": "answer_done"})
+
+                    streaming_task = asyncio.create_task(_direct_stream(text, context))
 
             elif frame_type == "audio_chunk":
                 data = frame.get("data", "")
                 if data:
-                    import base64
-                    import subprocess
-                    
-                    def decode_audio_chunk(b64_data: str) -> np.ndarray:
-                        try:
-                            audio_bytes = base64.b64decode(b64_data)
-                            cmd = [
-                                "ffmpeg",
-                                "-i", "pipe:0",
-                                "-f", "f32le",
-                                "-acodec", "pcm_f32le",
-                                "-ar", "16000",
-                                "-ac", "1",
-                                "pipe:1"
-                            ]
-                            process = subprocess.Popen(
-                                cmd,
-                                stdin=subprocess.PIPE,
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.PIPE
-                            )
-                            stdout, stderr = process.communicate(input=audio_bytes)
-                            if process.returncode != 0:
-                                logger.error(f"FFmpeg decoding failed: {stderr.decode()}")
-                                return np.array([], dtype=np.float32)
-                            return np.frombuffer(stdout, dtype=np.float32)
-                        except Exception as decode_err:
-                            logger.error(f"Failed to decode audio chunk: {decode_err}")
-                            return np.array([], dtype=np.float32)
-
                     loop = asyncio.get_running_loop()
-                    pcm_data = await loop.run_in_executor(None, decode_audio_chunk, data)
-                    
+                    pcm_data = await loop.run_in_executor(
+                        _ffmpeg_pool, _decode_audio_chunk, data
+                    )
+
                     if len(pcm_data) > 0:
                         from audio.transcriber import transcribe_chunk
                         text = await transcribe_chunk(pcm_data)
@@ -207,10 +247,31 @@ async def health():
 
 @app.post("/capture/start")
 async def capture_start():
-    return {"status": "started"}
+    global _audio_capture
+    if _audio_capture is not None:
+        return {"status": "already_running"}
+    try:
+        loop = asyncio.get_running_loop()
+        _audio_capture = AudioCapture(loop)
+        _audio_capture.start()
+        return {"status": "started"}
+    except Exception as e:
+        logger.error(f"Failed to start audio capture: {e}")
+        _audio_capture = None
+        return {"status": "error", "message": str(e)}
+
 
 @app.post("/capture/stop")
 async def capture_stop():
+    global _audio_capture
+    if _audio_capture is None:
+        return {"status": "not_running"}
+    try:
+        _audio_capture.stop()
+    except Exception as e:
+        logger.error(f"Error stopping audio capture: {e}")
+    finally:
+        _audio_capture = None
     return {"status": "stopped"}
 
 

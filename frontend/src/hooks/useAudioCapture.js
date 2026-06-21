@@ -47,9 +47,13 @@ export function useAudioCapture({ onTranscript, enabled = false }) {
       recorder.onstop = () => {
         const blob = new Blob(chunksRef.current, { type: 'audio/webm' })
         chunksRef.current = []
-        // Convert to base64 and send upstream (backend handles Whisper)
         blob.arrayBuffer().then((buf) => {
-          const b64 = btoa(String.fromCharCode(...new Uint8Array(buf)))
+          const bytes = new Uint8Array(buf)
+          let binary = ''
+          for (let i = 0; i < bytes.length; i += 8192) {
+            binary += String.fromCharCode.apply(null, bytes.subarray(i, i + 8192))
+          }
+          const b64 = btoa(binary)
           onTranscript?.({ type: 'audio_chunk', data: b64 })
         })
       }

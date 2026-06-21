@@ -168,13 +168,25 @@ Write-Step "5 / 6 — Starting Docker services (Redis + Backend)"
 
 Set-Location $SCRIPT_DIR
 
+Write-Info "Stopping any existing containers..."
+& docker compose -f $COMPOSE_FILE down --remove-orphans 2>$null
+
+Write-Info "Freeing ports if occupied..."
+foreach ($port in @(6379, $BACKEND_PORT)) {
+    $proc = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($proc) {
+        $pid = $proc.OwningProcess
+        Write-Warn "Port $port in use (PID $pid) — killing..."
+        Stop-Process -Id $pid -Force -ErrorAction SilentlyContinue
+        Start-Sleep -Seconds 1
+    }
+}
+
 Write-Info "Building backend Docker image (first run may take ~3–5 min)..."
 & docker compose -f $COMPOSE_FILE build --quiet backend
 
-Write-Info "Starting Redis..."
-& docker compose -f $COMPOSE_FILE up -d redis
-Write-Info "Starting backend..."
-& docker compose -f $COMPOSE_FILE up -d backend
+Write-Info "Starting all services..."
+& docker compose -f $COMPOSE_FILE up -d
 
 # Wait for backend health
 Write-Info "Waiting for backend API to be ready..."

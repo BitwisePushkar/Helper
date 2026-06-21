@@ -34,13 +34,13 @@ step "1 / 7 — Checking system requirements"
 if ! command -v docker &>/dev/null; then
   error "Docker not found. Install it from https://docs.docker.com/get-docker/ then re-run."
 fi
-if ! docker info &>/dev/null; then
+if ! sudo docker info &>/dev/null; then
   error "Docker daemon is not running. Start Docker Desktop (or 'sudo systemctl start docker') and re-run."
 fi
 success "Docker OK ($(docker --version | awk '{print $3}' | tr -d ','))"
 
 # Docker Compose v2
-if ! docker compose version &>/dev/null 2>&1; then
+if ! sudo docker compose version &>/dev/null 2>&1; then
   error "Docker Compose v2 not found. Update Docker Desktop or install the plugin."
 fi
 success "Docker Compose OK"
@@ -162,13 +162,35 @@ step "5 / 6 — Starting Docker services (Redis + Backend)"
 
 cd "$(dirname "$0")"
 
-info "Building backend Docker image (first run may take ~3–5 min)..."
-docker compose -f "$COMPOSE_FILE" build --quiet backend
+info "Stopping any existing containers..."
+sudo docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
 
-info "Starting Redis..."
-docker compose -f "$COMPOSE_FILE" up -d redis
-info "Starting backend..."
-docker compose -f "$COMPOSE_FILE" up -d backend
+info "Freeing ports if occupied..."
+# Stop system Redis if running (systemd will keep respawning it otherwise)
+if sudo systemctl is-active redis-server &>/dev/null; then
+  warn "System Redis service is running — stopping it..."
+  sudo systemctl stop redis-server
+  sudo systemctl disable redis-server 2>/dev/null || true
+fi
+if sudo systemctl is-active redis &>/dev/null; then
+  sudo systemctl stop redis
+  sudo systemctl disable redis 2>/dev/null || true
+fi
+
+for PORT in 6379 $BACKEND_PORT; do
+  PID=$(sudo lsof -ti :"$PORT" 2>/dev/null || true)
+  if [ -n "$PID" ]; then
+    warn "Port $PORT in use (PID $PID) — killing..."
+    sudo kill -9 $PID 2>/dev/null || true
+  fi
+done
+sleep 2
+
+info "Building backend Docker image (first run may take ~3–5 min)..."
+sudo docker compose -f "$COMPOSE_FILE" build --quiet backend
+
+info "Starting all services..."
+sudo docker compose -f "$COMPOSE_FILE" up -d
 
 # Wait for backend health
 info "Waiting for backend API to be ready..."
@@ -213,6 +235,15 @@ FRONTEND_PID=$!
 
 # Wait briefly for frontend to start
 sleep 2
+
+# Fix Electron sandbox permissions on Linux
+if [ "$OS" = "Linux" ]; then
+  CHROME_SANDBOX="$ELECTRON_DIR/node_modules/electron/dist/chrome-sandbox"
+  if [ -f "$CHROME_SANDBOX" ]; then
+    sudo chown root:root "$CHROME_SANDBOX"
+    sudo chmod 4755 "$CHROME_SANDBOX"
+  fi
+fi
 
 info "Starting Electron overlay..."
 cd "$ELECTRON_DIR"

@@ -99,7 +99,6 @@ function createOverlayWindow() {
   // Load the React app
   if (IS_DEV) {
     overlayWin.loadURL('http://localhost:5173')
-    overlayWin.webContents.openDevTools({ mode: 'detach' })
   } else {
     overlayWin.loadFile(
       path.join(__dirname, '..', 'resources', 'frontend', 'index.html')

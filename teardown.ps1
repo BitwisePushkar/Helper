@@ -30,6 +30,15 @@ if (Get-Command Get-CimInstance -ErrorAction SilentlyContinue) {
     }
 }
 
+# Free ports if still occupied
+Write-Info "Freeing ports if still occupied..."
+foreach ($port in @(6379, 8000)) {
+    $proc = Get-NetTCPConnection -LocalPort $port -ErrorAction SilentlyContinue | Select-Object -First 1
+    if ($proc) {
+        Stop-Process -Id $proc.OwningProcess -Force -ErrorAction SilentlyContinue
+    }
+}
+
 Write-Success "All services stopped. Data in Docker volumes is preserved."
 Write-Host "To also delete Gemini model cache and Whisper cache:" -ForegroundColor Yellow
 Write-Host "  docker compose -f docker/docker-compose.yml down -v"
